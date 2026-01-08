@@ -1,0 +1,281 @@
+# https://app.swaggerhub.com/apis-docs/coleitbruxelles/FreshDeal/1.0.0?view=uiDocs
+openapi: 3.0.3
+info:
+  title: FreshDeal API
+  description: API RESTful de la plateforme FreshDeal (réservation de FreshBox HyperFresh)
+  version: "1.0.0"
+servers:
+  # Added by API Auto Mocking Plugin
+  - description: SwaggerHub API Auto Mocking
+    url: https://virtserver.swaggerhub.com/coleitbruxelles/FreshDeal/1.0.0
+  - url: https://api.freshdeal.com/v1
+
+tags:
+  - name: Authentification
+  - name: Magasins
+  - name: Commandes
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: user@example.com
+        password:
+          type: string
+          example: password123
+
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123
+        email:
+          type: string
+          example: user@example.com
+        firstName:
+          type: string
+          example: Léa
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        user:
+          $ref: '#/components/schemas/User'
+
+    Store:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: HyperFresh Centre-Ville
+        address:
+          type: string
+          example: 123 Rue de la République
+        distance:
+          type: number
+          format: float
+          example: 0.8
+
+    FreshBox:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 101
+        type:
+          type: string
+          enum: [Basic, Repas, Boost]
+          example: Repas
+        price:
+          type: number
+          format: float
+          example: 4.00
+        description:
+          type: string
+          example: Sandwich, salade, dessert
+        available_slots:
+          type: integer
+          example: 5
+        pickup_window_start:
+          type: string
+          format: date-time
+          example: 2023-10-27T18:00:00Z
+        pickup_window_end:
+          type: string
+          format: date-time
+          example: 2023-10-27T19:00:00Z
+
+    CreateOrderRequest:
+      type: object
+      required: [freshbox_id, store_id]
+      properties:
+        freshbox_id:
+          type: integer
+          example: 101
+        store_id:
+          type: integer
+          example: 1
+
+    OrderResponse:
+      type: object
+      properties:
+        order_id:
+          type: integer
+          example: 555
+        status:
+          type: string
+          enum: [reserved, collected, cancelled, expired]
+          example: reserved
+        qr_code_data:
+          type: string
+          example: FD-555-ABC123
+        pickup_instructions:
+          type: string
+          example: Présentez ce code au rayon traiteur entre 18h et 19h.
+
+    OrderHistory:
+      type: object
+      properties:
+        order_id:
+          type: integer
+          example: 555
+        status:
+          type: string
+          example: collected
+        freshbox_type:
+          type: string
+          example: Repas
+        order_date:
+          type: string
+          format: date-time
+          example: 2023-10-27T17:30:00Z
+        total_price:
+          type: number
+          format: float
+          example: 4.00
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: Invalid credentials
+
+paths:
+  /auth/login:
+    post:
+      tags: [Authentification]
+      summary: Connexion utilisateur
+      description: Authentifie un utilisateur et retourne un token JWT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Connexion réussie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Identifiants invalides
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /stores:
+    get:
+      tags: [Magasins]
+      summary: Liste des magasins à proximité
+      parameters:
+        - in: query
+          name: lat
+          required: true
+          schema:
+            type: number
+            format: float
+        - in: query
+          name: lon
+          required: true
+          schema:
+            type: number
+            format: float
+        - in: query
+          name: radius
+          required: true
+          schema:
+            type: integer
+            example: 5
+      responses:
+        '200':
+          description: Liste des magasins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Store'
+
+  /stores/{storeId}/freshboxes:
+    get:
+      tags: [Magasins]
+      summary: FreshBox disponibles par magasin
+      parameters:
+        - in: path
+          name: storeId
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Liste des FreshBox
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FreshBox'
+
+  /orders:
+    post:
+      tags: [Commandes]
+      summary: Réserver une FreshBox
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Commande créée
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          description: Aucun créneau disponible
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me/orders:
+    get:
+      tags: [Commandes]
+      summary: Historique des commandes utilisateur
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Historique des commandes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrderHistory'
