@@ -1,0 +1,410 @@
+openapi: 3.1.0
+info:
+  title: EazyShop Products APIs Defenition
+  version: 1.0.0
+  summary: EazyShop
+  description: EazyShop
+  termsOfService: N/A
+  contact: 
+    name: "Contact Me: Ahmed Arafat" 
+    url: http://github.com/ahmed-Arafat10
+    email: arafat.software.engineer@gmail.com
+  license:
+    name: "EazyShop Licence: N/A"
+    url: N/A
+
+servers: 
+  - url: http://127.0.0.1:8333
+    description: Local Server
+  - url: https://bis-gp-management-api-dev.ahmedarafat.work/api/BIS-GP
+    description: Development Server
+  - url: https://bis-gp-management-api.ahmedarafat.work/api/BIS-GP
+    description: Production Server
+  - url: https://{SubDomain}.ahmedarafat.work/{ApiPrefix}
+    variables: 
+      SubDomain:
+        default: bis-gp-management-api-dev
+      ApiPrefix:
+        default: api/BIS-GP
+
+tags: 
+  - name: Categories
+    description: Categories-related endpoints   
+  - name: Products
+    description: Products-related endpoints
+  - name: Orders
+    description: Orders-related endpoints
+
+paths:
+  /cateogries:
+    get:
+      tags: 
+        - Categories
+      summary: list all categories
+      description: hello
+      parameters: 
+        - $ref: '#/components/parameters/categoryIdQueryParam'
+      responses: 
+        '200':
+          description: A
+          content:
+            application/json: 
+              schema: 
+                type: array
+                items: 
+                  $ref: '#/components/schemas/categoryObj'
+              examples:
+                allCategories:
+                  summary: All categories resonse example
+                  value:
+                    - categoryId: 100
+                      name: mobile
+                    - categoryId: 101
+                      name: laptop
+                    - categoryId: 102
+                      name: television
+                singleCategory:
+                  summary: Single category resonse example
+                  value:
+                    - categoryId: 100
+                      name: mobile
+        '500':
+          $ref: '#/components/responses/internalServerError'
+
+
+  /categories/{categoryId}:
+    get: 
+      tags: 
+        - Categories
+      summary: list single category
+      description: desc
+      parameters: 
+        - name: categoryId
+          in: path
+          schema: 
+            type: integer
+          required: true
+          examples:
+            mobile:
+              summary: use this example in mobile
+              value: 100
+            laptop:
+              value: 101
+            headphone:
+              value: 102
+            television:
+              value: 103
+
+      responses: 
+        '200':
+          description: d1
+          content: 
+            application/json: 
+              schema: 
+                $ref: '#/components/schemas/categoryObj'
+
+  /products:
+    get:
+      tags: 
+        - Products
+      summary: list all products
+      description: list all products in the System
+      parameters: 
+        - $ref: '#/components/parameters/categoryIdQueryParam'
+      responses: 
+        '200':
+          description: success
+          content: 
+            application/json: 
+              schema: 
+                type: array
+                items: 
+                  $ref: '#/components/schemas/productObj'
+              examples:
+                allProducts:
+                  summary: list all products example response
+                  value: 
+                    - productId: 1
+                      name: product 1
+                      price: 50
+                      categoryName: mobile
+                      quantity: 100
+                    - productId: 2
+                      name: product 2
+                      price: 999
+                      categoryName: laptop
+                      quantity: 39  
+  /products/{productId}:
+    get:
+      tags: 
+        - Products
+      summary: list specfic prodcut
+      description: list specific products in the System
+      parameters: 
+        - name: productId
+          in: path
+          required: true
+          schema: 
+            type: integer
+          example: 1
+      responses: 
+        '200':
+          description: success
+          content: 
+            application/json: 
+              schema: 
+                $ref: '#/components/schemas/productObj'
+  /orders:
+    post:
+      tags: 
+        - Orders
+      operationId: makeOrderOp
+      summary: make an order
+      description: make a new order
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                products:
+                  $ref: '#/components/schemas/productOrderObj'
+                address:
+                  $ref: '#/components/schemas/addressProperty'
+      responses: 
+        '201':
+          description: order is made
+          content:
+            application/json:
+              schema:
+                type: object
+                title: id of the order
+                properties:
+                  orderId:
+                    type: integer
+                    examples: 
+                      - 1
+                      - 2
+          links:
+            orderIdProperty:
+              $ref: '#/components/links/orderIdLink'
+  /orders/{orderId}:
+    put:
+      tags: 
+        - Orders
+      summary: update order details
+      description: update an already made order
+      parameters:
+        - $ref: '#/components/parameters/orderIdPathParam'
+      requestBody:
+        content: 
+          application/json: 
+            schema: 
+              type: object
+              properties: 
+                products:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/productOrderObj'
+                address:
+                  $ref: '#/components/schemas/addressProperty'
+        
+      responses: 
+        '200':
+          description: success operation
+          content:
+            application/json: 
+              schema:
+                type: object
+                properties: 
+                  status:
+                    type: string
+                    examples:
+                      - success
+    delete: 
+      tags: 
+        - Orders
+      summary: delete order
+      description: delete an already made order
+      parameters:
+        - $ref: '#/components/parameters/orderIdPathParam'
+      responses: 
+        '200':
+          description: success operation
+          content:
+            application/json: 
+              schema:
+                type: object
+                properties: 
+                  status:
+                    type: string
+                    examples:
+                      - success
+    get:
+      tags: 
+        - Orders      
+      summary: get order details
+      description: |
+        Creates a new user account.
+
+        **Validations include:**
+        - Required fields and data types
+        - Field length and format constraints
+        - Business rule validations
+        - Related resource existence checks
+      parameters:
+        - $ref: '#/components/parameters/orderIdPathParam'
+      responses: 
+        '200':
+          description: success operation
+          content:
+            application/json: 
+              schema:
+                type: object
+                properties: 
+                  products:
+                    $ref: '#/components/schemas/productOrderObj'
+                  address:
+                    $ref: '#/components/schemas/addressProperty'
+
+components:
+  parameters: 
+    orderIdPathParam:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: integer
+        description: ssss
+      example: 1
+    categoryIdQueryParam:
+      name: categoryId
+      in: query
+      schema: 
+        type: integer
+        minimum: 100
+        maximum: 1000
+      required: false
+      example: 1
+  schemas:
+    addressProperty:
+        type: object
+        properties:
+          addressLine:
+            type: string
+            examples: 
+              - XYZ St.
+          city:
+            type: string
+            examples:
+              - Haram
+          state:
+            type: string
+            examples: 
+              - Cairo
+          zipcode:
+            type: integer
+            examples: 
+              - 19191
+              - 111
+        required: [addressLine, city, state, zipcode]
+
+    productOrderObj:
+      type: object
+      properties: 
+        productId:
+          type: integer
+          examples: 
+            - 1
+            - 2
+            - 3
+        quantity:
+          type: integer
+          minimum: 1
+          examples: 
+            - 5
+            - 10
+            - 20
+    productObj:
+      type: object
+      properties: 
+        productId:
+          type: integer
+          examples:
+            - 1
+        name:
+          type: string
+          examples:
+            - IPhone
+        price:
+          type: number
+          examples:
+            - 1999
+        categoryName:
+          type: string
+          examples:
+            - Laptop
+        quantity:
+          type: integer
+          examples:
+            - 4
+      required: [productId, name, price, categoryName, quantity]
+    categoryObj:
+      type: object
+      properties: 
+        categoryId:
+          type: integer
+        name:
+          type: string
+    Mobile:
+      allOf:
+        - $ref: '#/components/schemas/productObj'
+        - type: object
+          properties: 
+            networkType:
+              type: string
+              enum: 
+                - 4G
+                - 5G
+          required: [networkType]
+    Laptop:
+      allOf:
+        - $ref: '#/components/schemas/productObj'
+        - type: object
+          properties: 
+            ram:
+              type: string
+              description: xyz
+              enum: 
+                - 8 GB
+                - 16 GB
+                - 32 GB
+          required: [ram]
+  responses: 
+    internalServerError:
+      description: | 
+        internal server errorrrrr
+      content: 
+        application/json: 
+          schema: 
+            type: object
+            properties: 
+              message:
+                type: string
+                examples: 
+                  - error 500
+  links:
+    orderIdLink:
+      description: >
+        `orderId` property will be used in all other requests that is named `orderId`
+      operationId: makeOrderOp
+      parameters:
+        orderId: '$response.body#/orderId'
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

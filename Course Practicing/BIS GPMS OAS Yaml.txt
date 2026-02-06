@@ -1,0 +1,1603 @@
+openapi: 3.1.0
+
+info:
+  title: BIS Graduation Projects Management System APIs Definition
+  version: 1.0.5
+  summary: RESTful APIs for managing BIS graduation projects and student workflows
+  description: |
+    This API provides backend services for the BIS Graduation Projects
+    Management System. It is designed to support BIS students throughout
+    the graduation project lifecycle, including authentication, team
+    registration, profile management, complaints handling, and project-
+    related operations.
+
+    The API follows RESTful standards and communicates using JSON payloads.
+
+    Authentication is handled using Laravel Sanctum with Bearer tokens.
+    For additional security, requests coming from non-frontend environments
+    such as Postman, browsers, or cURL must include a valid `X-SECRET` header.
+    Requests missing this header will be rejected.
+
+  termsOfService: N/A
+  contact:
+    name: "TA/Eng Ahmed Arafat"
+    url: https://ahmedarafat.vip/
+    email: aarafat.swe@gmail.com
+  license:
+    name: "License In-Progress"
+    url: N/A
+
+servers:
+  - url: http://127.0.0.1:8333
+    description: Local
+  - url: https://bis-gp-management-api-dev.ahmedarafat.work
+    description: Development
+  - url: https://bis-gp-management-api.ahmedarafat.work
+    description: Production
+
+security:
+  - sanctumAuth: []
+    XSecretHeader: []
+
+tags:
+  - name: Students
+    description: students-related endpoints
+  - name: Students.Auth
+    description: students authentication-related endpoints
+  - name: Students.TeamData
+    description: students team data endpoints
+  - name: Students.Complaints
+    description: students complaints endpoints
+  - name: Students.Profile
+    description: students profile endpoints
+  - name: Students.RegisterNewTeam
+    description: students Register New Team endpoints
+
+paths:
+  /student/auth/login:
+    post:
+      tags:
+        - Students.Auth
+      security: []
+      summary: Student login
+      operationId: studentLoginOp
+      description: |
+        Authenticates a student using SSN and password.
+
+        If authentication is successful, an access token is returned and
+        must be used in the `Authorization` header for subsequent protected
+        requests.
+
+        If authentication fails due to invalid credentials, the API returns
+        a 401 response using a unified error structure.
+
+        Login attempts are rate-limited to protect against brute-force
+        attacks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ssn, password]
+              properties:
+                ssn:
+                  type: string
+                  description: student SSN
+                  examples:
+                    - 33333333333333
+                password:
+                  type: string
+                  format: password
+                  description: student provided password
+                  examples:
+                    - HelloWorld123
+      responses:
+        '200':
+          description: login success
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginSuccessResponse"
+          links:
+            studentToken:
+              $ref: '#/components/links/studentToken'
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponseAsString"
+              examples:
+                WrongSsn:
+                  value:
+                    status: false
+                    message: "SSN Is Incorrect"
+                    data: []
+                    code: 401
+                WrongPassword:
+                  value:
+                    status: false
+                    message: "Password Is Incorrect"
+                    data: []
+                    code: 401
+
+        '429':
+          description: |
+            Too many login attempts detected.
+            After 5 failed attempts, requests are blocked for 2 minutes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimiting'
+  
+  /student/auth/logout:
+    get:
+      tags:
+        - Students.Auth
+      summary: Log out the authenticated student
+      description: |
+        Invalidates the currently active authentication token and logs the student out
+        from the system.
+
+        This endpoint requires a **valid access token**.  
+        If the token is missing, expired, or invalid, a **401 Invalid Token** response
+        will be returned.
+      responses:
+        '200':
+          description: Student logged out successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessAction'
+        '401':
+          $ref: '#/components/responses/ProblemWithToken'
+
+  /student/auth/correctSsn:
+    post:
+      tags:
+        - Students.Auth
+      summary: Submit a corrected SSN for a student
+      description: |
+        Allows a student to submit a **correct Social Security Number (SSN)** in case
+        the original value was imported incorrectly from an external or legacy system.
+
+        The request will be **validated server-side**.  
+        If the provided student ID does not exist,
+        a **422 Validation Error** will be returned.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [studentId, correctSsn]
+              properties:
+                studentId:
+                  type: integer
+                  examples: 
+                    - 51239000
+                correctSsn:
+                  type: string
+                  description: Correct SSN of the student
+                  examples: 
+                    - 33333333333333
+      responses:
+        '200':
+          description: SSN updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessAction'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponseAsArr"
+              examples:
+                WrongStudentId:
+                  value:
+                    status: false
+                    message: "The selected student id is invalid."
+                    data: []
+                    code: 422
+          
+  /student/auth/sendEmailWithPassword:
+    post: 
+      tags: 
+        - Students.Auth
+      summary: Send account password to student email
+      description: |
+        Allows a student to recover access to their account by providing their **SSN**.
+
+        ### How it works
+        - The student submits their SSN.
+        - A background job is dispatched and processed within **1–10 minutes** (depending on queue load).
+        - The job checks whether a password already exists:
+          - If **not**, a new password is generated.
+          - The password is then sent to the student's **personal email** (`personal_email` column).
+        - Also if 2 requests are sent at the same time, it will just create one job thence just one email will be sent
+        ### Failure cases
+        - If `personal_email` is **empty or missing**, the job will **fail** and an exception will be raised.
+        - If the student exceeds the allowed number of attempts, rate limiting will apply.
+
+        ### Security note
+        - This endpoint is **rate-limited** to prevent abuse.
+      requestBody: 
+        content: 
+          application/json: 
+            schema:
+              type: object
+              required: [ssn]
+              description: |
+                Student National SSN.
+                Must exactly match the SSN stored in the system.
+                Used only for identity verification during password recovery.
+              properties:
+                ssn:
+                  type: string
+                  description: student SSN
+                  examples:
+                    - 33333333333333
+      responses: 
+        '200':
+          description: |
+            Request accepted successfully.
+
+            A background job has been dispatched to generate (if needed) and send
+            the student's password via email.
+          content: 
+            application/json: 
+              schema: 
+                $ref: '#/components/schemas/SuccessAction'
+                
+        '429':
+          description: |
+            Too many attempts.
+
+            After **2 failed attempts**, the student will be blocked from using
+            this endpoint for **24 hours**.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateLimiting'
+
+
+
+
+
+  /student/teamData/views:
+    get:
+      tags: 
+        - Students.TeamData
+      summary: View student's team data
+      description: |
+        Retrieves the complete **team information** for the authenticated student.
+
+        ### Current Data
+        - Team members details:
+          - Name
+          - Profile picture
+          - Email
+          - Role
+          - Membership status (member / team leader)
+
+        ### Future Enhancements
+        This endpoint will later include **project-related data**, such as:
+        - Supervised doctors
+        - Selected project idea
+        - Project tags
+      responses:
+        '200':
+          description: |
+            Student team data retrieved successfully.
+          content:
+            application/json: 
+              schema:
+                $ref: '#/components/schemas/TeamDataObject'          
+        '401':
+           $ref: '#/components/responses/ProblemWithToken'
+
+  /student/teamData/listProjectTags:
+    get:
+      tags:
+        - Students.TeamData
+      operationId: listProjectTagsOp
+      summary: List available project tags
+      description: >
+        Returns a list of available project tags that can be assigned to a
+        graduation project.
+        
+        Only tags that are currently active in the database (`is_active = true`)
+        are included in the response. The returned list may vary over time based
+        on database changes.
+        
+        This endpoint is accessible **only by the team leader**, as it is used
+        during project idea selection to allow multi-selecting relevant tags.
+      responses:
+        '200':
+          description: Successfully retrieved available project tags.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectTagsDropdownResponse'
+              examples:
+                default:
+                  $ref: '#/components/examples/ProjectTagsExample'
+          links:
+              tagId:
+                $ref: '#/components/links/tagIdLink'
+        '401':
+           $ref: '#/components/responses/ProblemWithToken'
+        '403':
+           $ref: '#/components/responses/MustBeATeamLeaderResponse'
+                  
+  /student/teamData/updateProjectTags:
+    put:
+      tags:
+        - Students.TeamData
+      summary: Update team project tags
+      description: |
+        Replaces the currently assigned project tags for the  team with a new set of tags.
+
+        This operation **overrides all existing tags** associated with the team’s
+        selected project. A minimum of **5 project tags** must be provided.
+
+        ⚠️ Access is restricted to the **team leader** and only allowed
+        if the team is already assigned to a project.
+      requestBody:
+        description: List of project tag IDs to be associated with the team project
+        content:
+          application/json: 
+            schema:
+              type: object
+              description: Payload used to update the team’s project tags
+              required: [projectTagsIds]
+              properties: 
+                projectTagsIds:
+                  type: array
+                  minItems: 5
+                  description: |
+                    Array of project tag identifiers.
+                    At least 5 distinct tag IDs must be provided
+                  items:
+                    type: integer
+                    description: Project tag ID
+            examples:
+              example:
+                value:
+                  projectTagsIds:
+                    - 3
+                    - 4
+                    - 5
+                    - 6
+                    - 7
+      responses:
+        '201':
+          description: Project tags updated successfully
+          content:
+            application/json: 
+              schema:
+                $ref: '#/components/schemas/SuccessUpdateProjectTags'
+        '403':
+           $ref: '#/components/responses/MustBeATeamLeaderResponse'
+        '404':
+          $ref: '#/components/responses/MustBeAssignedToProjectResponse'
+
+  /student/complaint/dropdown/types:
+    get:
+      tags:
+        - Students.Complaints
+      operationId: getStudentComplaintsDropdownOp
+      summary: Retrieve available student complaint types
+      description: >
+        Returns a list of predefined complaint types that students can select
+        from when submitting a complaint.
+
+        IMPORTANT: The returned complaint types are dynamically filtered based
+        on the is_active flag in the database. Only active complaint types are
+        included in the response.
+      responses:
+        '200':
+          description: >
+            Successfully retrieved the list of active student complaint types.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessStudentComplaintDropdown'
+              examples:
+                default:
+                  $ref: '#/components/examples/StudentComplaintDropdownExample'
+          links:
+            studentComplaintId:
+              $ref: '#/components/links/studentComplaintIdLink'
+        '401':
+          $ref: '#/components/responses/ProblemWithToken'
+
+
+
+components:
+  responses:
+    MustBeAssignedToProjectResponse:
+      description: xyz
+      content:
+        application/json: 
+          schema:
+            $ref: '#/components/schemas/MustBeAssignedToProject'
+    MustBeATeamLeaderResponse:
+      description: >
+        Access denied. The authenticated student is not the team leader.
+        This response is returned when a non-leader team member attempts to
+        access an endpoint that is restricted to team leaders only.
+      content:
+        application/json: 
+          schema:
+            $ref: '#/components/schemas/MustBeATeamLeader'
+    ProblemWithToken:
+      description: Not authenticated
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/InvalidToken'
+              - $ref: '#/components/schemas/MissingAuthorizationToken'
+          examples:
+            invalidToken:
+              value:
+                status: false
+                message: Invalid Token
+                data: []
+                code: 401
+            missingToken:
+              value:
+                status: false
+                message: Missing Authorization Token
+                data: []
+                code: 401
+  
+  securitySchemes:
+    sanctumAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Sanctum
+      description: |
+        Laravel Sanctum authentication using Bearer token.
+        Add token in the Authorization header as:
+        Authorization: Bearer `1|XxXxXxXxXxX`
+
+    XSecretHeader:
+      type: apiKey
+      in: header
+      name: X-SECRET
+      description: |
+        Required for non-frontend requests (Postman, browser, cURL, etc).
+        Requests not coming from the allowed frontend CORS domain
+        MUST include this header, otherwise the API will return:
+        {
+          "error": "Unauthorized. Invalid CORS 🖕"
+        }
+
+  schemas:
+    SuccessResponse:
+      type: object
+      required: [status, message]
+      properties:
+        status:
+          type: boolean
+          enum: [true]
+        message:
+          type: string
+          enum: [success]
+    ErrorResponseAsString: #Abstract
+      type: object
+      required:
+        - status
+        - message
+        - data
+        - code
+      properties:
+        status:
+          type: boolean
+          description: Indicates failure
+        message:
+          type: string
+          description: Error message describing the failure reason
+        data:
+          type: array
+          items: {}
+          description: Additional error details
+        code:
+          type: integer
+          description: HTTP status code
+    ErrorResponseAsArr:
+      type: object
+      required:
+        - status
+        - message
+        - data
+        - code
+      properties:
+        status:
+          type: boolean
+          description: Indicates failure
+        message:
+          type: array
+          description: Error message(s) describing the failure reason
+          items: {}
+        data:
+          type: array
+          items: {}
+          description: Additional error details
+        code:
+          type: integer
+          description: HTTP status code
+    SuccessAction:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: boolean
+          examples:
+            - true
+        message:
+          type: string
+          examples:
+            - success
+        data:
+          type: boolean
+          examples:
+            - true
+    
+    MustBeAssignedToProject:
+      description: xyz
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponseAsString'
+        - type: object
+          properties:
+            code:
+              type: integer
+              enum: [404]
+            message:
+              type: string
+              enum: ["You Are Not Assigned To a Project Yet111"]
+      examples:
+        - status: false
+          message: "You Are Not Assigned To a Project Yet"
+          data: []
+          code: 404
+
+    MustBeATeamLeader:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponseAsString'
+        - type: object
+          properties:
+            code:
+              type: integer
+              enum: [403]
+            message:
+              type: string
+              enum: ["Invalid Permission: Student Must Be A Team Leader"]
+      examples:
+        - status: false
+          message: "Invalid Permission: Student Must Be A Team Leader"
+          data: []
+          code: 403
+    
+    RateLimiting:
+      allOf: 
+        - $ref: '#/components/schemas/ErrorResponseAsString'
+        - type: object
+          properties:
+            code:
+              type: integer
+              enum: [429]
+            message:
+              type: string
+              enum: ["Too Many Attempts."]
+      examples:
+        - status: false
+          message: "Too Many Attempts."
+          data: []
+          code: 429
+            
+    InvalidToken:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponseAsString'
+        - type: object
+          properties:
+            code:
+              type: integer
+              enum: [401]
+            message:
+              type: string
+              enum: ["Invalid Token"]
+      examples:
+        - status: false
+          message: "Invalid Token"
+          data: []
+          code: 401
+
+    MissingAuthorizationToken:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponseAsString'
+        - type: object
+          properties:
+            code:
+              type: integer
+              enum: [401]
+            message:
+              type: string
+              enum: ["Missing Authorization Token"]
+      examples:
+        - status: false
+          message: "Missing Authorization Token"
+          data: []
+          code: 401
+
+    LoginSuccessResponse:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: boolean
+          examples:
+            - true
+        message:
+          type: string
+          examples:
+            - success
+        data:
+          type: object
+          required: [token, usertype, model]
+          properties:
+            token:
+              type: string
+              examples:
+                - "1|47zd4RPDVa867XV5QHSYnRxtw5dAoRF3bTJkCGMO5bdb4b65"
+            usertype:
+              type: string
+              enum:
+                - student
+            model:
+              type: object
+              required: [id, name_en, name_ar]
+              properties:
+                id:
+                  type: integer
+                  examples:
+                    - 1
+                name_en:
+                  type: string
+                  pattern: "^[A-Za-z\\- ]+$"
+                  examples:
+                    - Ahmed Arafat
+                name_ar:
+                  type: string
+                  pattern: "^[\\u0600-\\u06FF ]+$"
+                  examples:
+                    - احمدعرفات
+
+    StudentRoleProperty:
+      type: string
+      description: >
+        Defines the student's functional role within the graduation project team.
+        The value represents either a single primary specialization or a combined
+        responsibility across multiple domains such as development, system analysis,
+        and business planning.
+      enum: 
+        - "Back-End"
+        - "Front-End"
+        - "System Analysis"
+        - "Business"
+        - "Back-End & Front-End"
+        - "Back-End & System Analysis"
+        - "Back-End & Business"
+        - "Front-End & System Analysis"
+        - "Front-End & Business"
+        - "System Analysis & Business"
+
+    StudentTypeProperty:
+      type: string
+      description: >
+        Indicates the student's position within the project team.
+        A student can either be responsible for leading and coordinating the team
+        or participate as a regular team member without leadership responsibilities.
+      enum: 
+        - "Team Leader"
+        - "Member"
+    DrTitleProperty:
+      type: string
+      description: >
+        Represents the academic title of a supervising faculty member.
+        The value reflects the official academic rank used for supervision,
+        evaluation, and formal project documentation within the system.
+      enum:
+        - "Doctor"
+        - "Assistant Professor"
+        - "Associate Professor"
+        - "Professor"
+    DrMajorProperty:
+      type: string
+      description: >
+        Represents the Dr's academic major within the faculty.
+        The value determines the primary field of study and is used for
+        project eligibility, team composition rules, and academic reporting.
+      enum:
+        - "IT"
+        - "BUSINESS"
+        
+    SupervisedDrInViewTeamData:
+      type: object
+      description: >
+        Represents the supervising faculty member assigned to the team.
+        This object contains the academic, contact, and institutional details
+        of the doctor responsible for supervising or evaluating the project.
+      properties:
+        doctorId:
+          type: integer
+          description: Unique identifier of the supervising doctor in the system.
+          examples:
+            - 3
+        doctorName:
+          type: string
+          description: Full name of the supervising doctor.
+          examples:
+            - "Dr. Mennahllah Mamdouh"
+        doctorPhone:
+          type: string
+          description: Contact phone number of the supervising doctor.
+          examples:
+            - "+201112223334"
+        doctorEmail:
+          $ref: '#/components/schemas/CollegeEmailProperty'
+        doctorTitle:
+          $ref: '#/components/schemas/DrTitleProperty'
+        doctorMajor:
+          $ref: '#/components/schemas/DrMajorProperty'
+        doctorUniversity:
+          type: string
+          description: Name of the university the doctor is affiliated with.
+          examples:
+            - "Cairo University"
+        doctorFaculty:
+          type: string
+          description: Faculty or college within the university.
+          examples:
+            - "Faculty of Business Information Systems"
+
+    ProjectTagsProperty:
+      type: string 
+      description: >
+        tag that describe the project's domain, technologies,
+        application type, and functional scope. These tags are used for
+        project classification, searching, filtering, and supervisor matching.
+      enum:
+          # Computer Science & AI
+          - "Artificial Intelligence"
+          - "Data Science"
+          - "Machine Learning"
+          - "Deep Learning"
+          - "Natural Language Processing"
+          - "Computer Vision"
+          - "Cybersecurity"
+          - "Blockchain"
+          - "Internet of Things"
+          - "Embedded Systems"
+
+          # XR & Interactive Media
+          - "Augmented Reality"
+          - "Virtual Reality"
+          - "Game Development"
+          - "Game"
+
+          # Health & Medical
+          - "Healthcare"
+          - "Pharmacy"
+          - "Medical Technology"
+
+          # Education
+          - "Education"
+          - "E-Learning"
+
+          # Business & Economics
+          - "Finance"
+          - "Banking"
+          - "Accounting"
+          - "Economics"
+          - "Marketing"
+          - "Business Administration"
+          - "E-Commerce"
+          - "Human Resources"
+          - "Logistics"
+          - "Management System"
+          - "Recommendation System"
+
+          # Engineering & Environment
+          - "Energy"
+          - "Agriculture"
+          - "Environmental Science"
+          - "Transportation"
+
+          # Media & Humanities
+          - "Tourism"
+          - "Media"
+          - "Journalism"
+          - "Law"
+          - "Psychology"
+          - "Sociology"
+          - "Political Science"
+          - "History"
+          - "Art"
+          - "Music"
+          - "Film"
+          - "Design"
+          - "Graphic Design"
+          - "Interior Design"
+
+          # Application Types
+          - "Web Application"
+          - "Mobile Application"
+          - "Desktop Application"
+          - "API Development"
+          - "Automation System"
+          - "Simulation System"
+          - "AI Chatbot"
+          - "Machine Learning Model"
+          - "Embedded System"
+
+          # Programming Languages & Frameworks
+          - "PHP"
+          - "Laravel"
+          - "Java"
+          - "Spring Boot"
+          - "Kotlin"
+          - ".NET"
+          - "C#"
+          - "Python"
+          - "Django"
+          - "Flask"
+          - "Node.js"
+          - "Express.js"
+          - "React"
+          - "Next.js"
+          - "Angular"
+          - "Vue.js"
+          - "Nuxt.js"
+          - "TypeScript"
+          - "JavaScript"
+          - "HTML"
+          - "CSS"
+          - "Tailwind CSS"
+          - "Bootstrap"
+          - "SASS"
+
+          # Databases & Cloud
+          - "MySQL"
+          - "PostgreSQL"
+          - "MongoDB"
+          - "Firebase"
+          - "SQLite"
+          - "Oracle"
+
+          # DevOps & Tools
+          - "Docker"
+          - "Kubernetes"
+          - "Git"
+          - "GitHub"
+
+          # APIs & ML Frameworks
+          - "REST API"
+          - "GraphQL"
+          - "TensorFlow"
+          - "PyTorch"
+          - "OpenCV"
+
+          # Mobile Platforms
+          - "Android"
+          - "iOS"
+          - "Flutter"
+          - "React Native"
+    ProjectTagsPropertyArr:
+      type: array
+      description: >
+        A list of tags that describe the project's domain, technologies,
+        application type, and functional scope. These tags are used for
+        project classification, searching, filtering, and supervisor matching.
+      items:
+        $ref: '#/components/schemas/ProjectTagsProperty'
+    
+    ProjectTagsDropdownResponse:
+      description: >
+        Standard success response containing a list of project tags formatted
+        for dropdowns and selection components. This response is typically used
+        when creating or editing graduation projects to allow users to choose
+        one or more relevant project tags.
+      allOf: 
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          required: [data]
+          properties: 
+            data:
+              $ref: '#/components/schemas/ProjectTagsDropdown'
+    ProjectTagsDropdown:
+      type: array
+      description: >
+        Array of selectable project tags used in dropdowns and selection components.
+        The returned items are dynamically loaded from the database and include only
+        tags that are currently active (`is_active = true`).
+        The contents of this list may vary over time depending on changes in the
+        database (such as tag activation or deactivation).
+      items:
+        $ref: '#/components/schemas/ProjectTagDropdownObject'
+
+    ProjectTagDropdownObject:
+      type: object
+      description: >
+        Represents a selectable project tag used in dropdowns and tag selectors.
+        Each tag has database ID (used in association later) & tag name that describe a project domain, technology, or application area
+        that can be assigned to a graduation project.
+      required: [tagId, tagName]
+      properties:
+        tagId:
+          type: integer
+          examples: 
+            - 1
+            - 2
+            - 3
+            - 4
+            - 5
+            - 6
+            - 7
+            - 8
+            - 9
+            - 10
+            - 11
+            - 12
+            - 13
+            - 14
+            - 15
+            - 16
+            - 17
+            - 18
+            - 19
+            - 20
+            - 21
+            - 22
+            - 23
+            - 24
+            - 25
+            - 26
+            - 27
+            - 28
+            - 29
+            - 30
+            - 31
+            - 32
+            - 33
+            - 34
+            - 35
+            - 36
+            - 37
+            - 38
+            - 39
+            - 40
+            - 41
+            - 42
+            - 43
+            - 44
+            - 45
+            - 46
+            - 47
+            - 48
+            - 49
+            - 50
+            - 51
+            - 52
+            - 53
+            - 54
+            - 55
+            - 56
+            - 57
+            - 58
+            - 59
+            - 60
+            - 61
+            - 62
+            - 63
+            - 64
+            - 65
+            - 66
+            - 67
+            - 68
+            - 69
+            - 70
+            - 71
+            - 72
+            - 73
+            - 74
+            - 75
+            - 76
+            - 77
+            - 78
+            - 79
+            - 80
+            - 81
+            - 82
+            - 83
+            - 84
+            - 85
+            - 86
+            - 87
+            - 88
+            - 89
+            - 90
+            - 91
+            - 92
+            - 93
+            - 94
+            - 95
+            - 96
+            - 97
+            - 98
+            - 99
+            - 100
+        tagName:
+          type: string
+          examples: 
+            - Artificial Intelligence
+            - Data Science
+            - Cybersecurity
+            - Internet of Things
+            - Embedded Systems
+            - Blockchain
+            - Augmented Reality
+            - Virtual Reality
+            - Machine Learning
+            - Deep Learning
+            - Natural Language Processing
+            - Computer Vision
+            - Healthcare
+            - Pharmacy
+            - Medical Technology
+            - Education
+            - E-Learning
+            - Finance
+            - Banking
+            - Accounting
+            - Economics
+            - Marketing
+            - Business Administration
+            - E-Commerce
+            - Human Resources
+            - Logistics
+            - Energy
+            - Agriculture
+            - Environmental Science
+            - Transportation
+            - Tourism
+            - Media
+            - Journalism
+            - Law
+            - Psychology
+            - Sociology
+            - Political Science
+            - History
+            - Design
+            - Graphic Design
+            - Interior Design
+            - Game Development
+            - Music
+            - Film
+            - Art
+            - Web Application
+            - Mobile Application
+            - Desktop Application
+            - API Development
+            - Embedded System
+            - Automation System
+            - Game
+            - Machine Learning Model
+            - AI Chatbot
+            - Management System
+            - Recommendation System
+            - Simulation System
+            - PHP
+            - Laravel
+            - Java
+            - Spring Boot
+            - Kotlin
+            - .NET
+            - C#
+            - Python
+            - Django
+            - Flask
+            - Node.js
+            - Express.js
+            - React
+            - Next.js
+            - Angular
+            - Vue.js
+            - Nuxt.js
+            - TypeScript
+            - JavaScript
+            - HTML
+            - CSS
+            - Tailwind CSS
+            - Bootstrap
+            - SASS
+            - MySQL
+            - PostgreSQL
+            - MongoDB
+            - Firebase
+            - SQLite
+            - Oracle
+            - Docker
+            - Kubernetes
+            - Git
+            - GitHub
+            - REST API
+            - GraphQL
+            - TensorFlow
+            - PyTorch
+            - OpenCV
+            - Android
+            - iOS
+            - Flutter
+            - React Native
+
+    TeamDataObject:
+      type: object
+      required: [status, message, data]
+      properties:
+        status:
+          type: boolean
+          description: Indicates whether the request was processed successfully.
+          enum: [true]
+          examples:
+            - true
+        message:
+          type: string
+          description: Human-readable message describing the result of the request.
+          enum: [success]
+          examples:
+            - success
+        data:
+          type: object
+          description: Container object holding all team-related data for the student.
+          required:
+            [
+              teamData,
+              teamMembersData,
+              supervisedDoctorData,
+              supervisedBusinessDoctorData,
+              selectedProject
+            ]
+          properties:
+            teamData:
+              type: object
+              description: Basic metadata related to the student's team.
+              properties:
+                teamID:
+                  type: integer
+                  description: Unique identifier of the team.
+                  examples:
+                    - 1
+            teamMembersData:
+              type: array
+              description: List of all students who are members of the team.
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    description: Internal system identifier for the team membership record.
+                    examples:
+                      - 10
+                  studentId:
+                    type: integer
+                    description: Unique identifier of the student.
+                    examples:
+                      - 20201234
+                  studentProfilePic:
+                    type: string
+                    format: url
+                    description: URL of the student's profile picture.
+                    examples:
+                      - "https://example.com/profiles/student1.png"
+                  studentName:
+                    type: string
+                    description: Full name of the student.
+                    examples:
+                      - "Ahmed Mohamed"
+                  studentPhone:
+                    type: string
+                    description: Student's phone number.
+                    examples:
+                      - "+201012345678"
+                  studentCollegeEmail:
+                    type: string
+                    format: email
+                    description: Official college email address of the student.
+                    examples:
+                      - "ahmed.mohamed@bis.edu.eg"
+                  studentRole:
+                    $ref: '#/components/schemas/StudentRoleProperty'
+                  type:
+                    $ref: '#/components/schemas/StudentTypeProperty'
+            supervisedItDoctorData:
+              $ref: '#/components/schemas/SupervisedDrInViewTeamData'  
+            supervisedBusinessDoctorData:
+              $ref: '#/components/schemas/SupervisedDrInViewTeamData'
+            selectedProject:
+              type: object
+              description: Information about the project selected by the team.
+              properties:
+                info:
+                  type: object
+                  description: Core project details.
+                  properties:
+                    id:
+                      type: integer
+                      description: Unique identifier of the project.
+                      examples:
+                        - 5
+                    projectNameEn:
+                      type: string
+                      description: Project name in English.
+                      examples:
+                        - "Smart Healthcare Monitoring System"
+                    projectNameAr:
+                      type: string
+                      description: Project name in Arabic.
+                      examples:
+                        - "نظام ذكي لمتابعة الرعاية الصحية"
+                    shortDescription:
+                      type: string
+                      description: Brief summary of the project idea.
+                      examples:
+                        - "A system for monitoring patient vitals using IoT."
+                    longDescription:
+                      type: string
+                      description: Detailed explanation of the project, objectives, and scope.
+                      examples:
+                        - "The project aims to build an IoT-based healthcare platform that collects, analyzes, and visualizes patient health data in real time."
+                features:
+                  type: array
+                  description: List of main functional features implemented in the project.
+                  items:
+                    type: string
+                  examples:
+                    - ["User Authentication", "Real-time Monitoring", "Analytics Dashboard"]
+                tags:
+                  $ref: '#/components/schemas/ProjectTagsPropertyArr'
+    CollegeEmailProperty:
+      type: string
+      format: email
+      description: >
+        Official university email address.
+        Only emails issued by the Faculty of Commerce, Helwan University
+        are accepted.
+      pattern: '^[A-Za-z0-9._%+-]+@commerce\.helwan\.edu\.eg$'
+      examples:
+        - "ahmed.mohamed.yousry@commerce.helwan.edu.eg"
+
+    SuccessUpdateProjectTags:
+      description: xyz
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse' 
+        - type: object
+          properties:
+            data:
+              type: object
+              properties:
+                newTags:
+                  $ref: '#/components/schemas/ProjectTagsDropdown'  
+    
+    SuccessStudentComplaintDropdown:
+      description: >
+        Standard successful response containing a list of available student
+        complaint types to be displayed in a dropdown selector.
+      allOf:
+        - $ref: '#/components/schemas/SuccessResponse'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/StudentComplaintDropdown'
+    StudentComplaintDropdown:
+      description: >
+        Collection of complaint dropdown items supported by the system.
+        Only complaint types marked as active (is_active = true) in the database
+        are returned.
+      type: array
+      items:
+        description: >
+          Single complaint option containing its identifier and display name.
+        $ref: '#/components/schemas/StudentComplaintDropdownObject'
+    StudentComplaintDropdownObject:
+      description: >
+        Represents a single selectable complaint type with a unique identifier
+        and a human-readable name.
+      type: object
+      required: [complaintId, complaintName]
+      properties:
+        complaintId:
+          description: >
+            Unique numeric identifier of the complaint type, used internally
+            by the system.
+          type: integer
+          enum: [
+            1,2,3,4,5,6,7,8,9,10,11
+          ]
+        complaintName:
+          description: >
+            Display name of the complaint type shown to the student in the
+            dropdown menu.
+          type: string
+          enum: [
+            "Change Team",
+            "Change Role Inside The Team",
+            "About Supervised Dr.",
+            "About Another Teammate",
+            "Bug/Error About The Website",
+            "Other",
+            "Wrong SSN",
+            "Wrong CGPA",
+            "Add New Project Tag",
+            "Wrong Team Assignment",
+            "Wrong Role"
+          ]
+
+  links:
+    studentToken:
+      description: token will be used in all student authenticated endpoints
+      operationId: studentLoginOp
+      parameters:
+        token: Bearer {$response.body#/data/token}
+    tagIdLink:
+      description: Tag Id will be used for updating project association with tags
+      operationId: listProjectTagsOp
+      parameters:
+        tagId: {$response.body#/data/0/tagId}
+    studentComplaintIdLink:
+      description: >
+        References the complaintId returned in the response body to be used
+        in follow-up requests.
+      operationId: getStudentComplaintsDropdownOp
+      parameters:
+        complaintId: {$response.body#/data/0/complaintId}
+
+
+  examples:
+    StudentComplaintDropdownExample:
+      value:
+        status: true
+        message: success
+        data:
+          - complaintId: 1
+            complaintName: "Change Team"
+          - complaintId: 2
+            complaintName: "Change Role Inside The Team"
+          - complaintId: 3
+            complaintName: "About Supervised Dr."
+          - complaintId: 4
+            complaintName: "About Another Teammate"
+          - complaintId: 5
+            complaintName: "Bug/Error About The Website"
+          - complaintId: 6
+            complaintName: "Other"
+          - complaintId: 7
+            complaintName: "Wrong SSN"
+          - complaintId: 8
+            complaintName: "Wrong CGPA"
+          - complaintId: 9
+            complaintName: "Add New Project Tag"
+          - complaintId: 10
+            complaintName: "Wrong Team Assignment"
+          - complaintId: 11
+            complaintName: "Wrong Role"
+    ProjectTagsExample:
+      value:
+        status: true
+        message: success
+        data:
+        - tagId: 1
+          tagName: Artificial Intelligence
+        - tagId: 2
+          tagName: Data Science
+        - tagId: 3
+          tagName: Cybersecurity
+        - tagId: 4
+          tagName: Internet of Things
+        - tagId: 5
+          tagName: Embedded Systems
+        - tagId: 6
+          tagName: Blockchain
+        - tagId: 7
+          tagName: Augmented Reality
+        - tagId: 8
+          tagName: Virtual Reality
+        - tagId: 9
+          tagName: Machine Learning
+        - tagId: 10
+          tagName: Deep Learning
+        - tagId: 11
+          tagName: Natural Language Processing
+        - tagId: 12
+          tagName: Computer Vision
+        - tagId: 13
+          tagName: Healthcare
+        - tagId: 14
+          tagName: Pharmacy
+        - tagId: 15
+          tagName: Medical Technology
+        - tagId: 16
+          tagName: Education
+        - tagId: 17
+          tagName: E-Learning
+        - tagId: 18
+          tagName: Finance
+        - tagId: 19
+          tagName: Banking
+        - tagId: 20
+          tagName: Accounting
+        - tagId: 21
+          tagName: Economics
+        - tagId: 22
+          tagName: Marketing
+        - tagId: 23
+          tagName: Business Administration
+        - tagId: 24
+          tagName: E-Commerce
+        - tagId: 25
+          tagName: Human Resources
+        - tagId: 26
+          tagName: Logistics
+        - tagId: 27
+          tagName: Energy
+        - tagId: 28
+          tagName: Agriculture
+        - tagId: 29
+          tagName: Environmental Science
+        - tagId: 30
+          tagName: Transportation
+        - tagId: 31
+          tagName: Tourism
+        - tagId: 32
+          tagName: Media
+        - tagId: 33
+          tagName: Journalism
+        - tagId: 34
+          tagName: Law
+        - tagId: 35
+          tagName: Psychology
+        - tagId: 36
+          tagName: Sociology
+        - tagId: 37
+          tagName: Political Science
+        - tagId: 38
+          tagName: History
+        - tagId: 39
+          tagName: Design
+        - tagId: 40
+          tagName: Graphic Design
+        - tagId: 41
+          tagName: Interior Design
+        - tagId: 42
+          tagName: Game Development
+        - tagId: 43
+          tagName: Music
+        - tagId: 44
+          tagName: Film
+        - tagId: 45
+          tagName: Art
+        - tagId: 46
+          tagName: Web Application
+        - tagId: 47
+          tagName: Mobile Application
+        - tagId: 48
+          tagName: Desktop Application
+        - tagId: 49
+          tagName: API Development
+        - tagId: 50
+          tagName: Embedded System
+        - tagId: 51
+          tagName: Automation System
+        - tagId: 52
+          tagName: Game
+        - tagId: 53
+          tagName: Machine Learning Model
+        - tagId: 54
+          tagName: AI Chatbot
+        - tagId: 55
+          tagName: Management System
+        - tagId: 56
+          tagName: Recommendation System
+        - tagId: 57
+          tagName: Simulation System
+        - tagId: 58
+          tagName: PHP
+        - tagId: 59
+          tagName: Laravel
+        - tagId: 60
+          tagName: Java
+        - tagId: 61
+          tagName: Spring Boot
+        - tagId: 62
+          tagName: Kotlin
+        - tagId: 63
+          tagName: .NET
+        - tagId: 64
+          tagName: C#
+        - tagId: 65
+          tagName: Python
+        - tagId: 66
+          tagName: Django
+        - tagId: 67
+          tagName: Flask
+        - tagId: 68
+          tagName: Node.js
+        - tagId: 69
+          tagName: Express.js
+        - tagId: 70
+          tagName: React
+        - tagId: 71
+          tagName: Next.js
+        - tagId: 72
+          tagName: Angular
+        - tagId: 73
+          tagName: Vue.js
+        - tagId: 74
+          tagName: Nuxt.js
+        - tagId: 75
+          tagName: TypeScript
+        - tagId: 76
+          tagName: JavaScript
+        - tagId: 77
+          tagName: HTML
+        - tagId: 78
+          tagName: CSS
+        - tagId: 79
+          tagName: Tailwind CSS
+        - tagId: 80
+          tagName: Bootstrap
+        - tagId: 81
+          tagName: SASS
+        - tagId: 82
+          tagName: MySQL
+        - tagId: 83
+          tagName: PostgreSQL
+        - tagId: 84
+          tagName: MongoDB
+        - tagId: 85
+          tagName: Firebase
+        - tagId: 86
+          tagName: SQLite
+        - tagId: 87
+          tagName: Oracle
+        - tagId: 88
+          tagName: Docker
+        - tagId: 89
+          tagName: Kubernetes
+        - tagId: 90
+          tagName: Git
+        - tagId: 91
+          tagName: GitHub
+        - tagId: 92
+          tagName: REST API
+        - tagId: 93
+          tagName: GraphQL
+        - tagId: 94
+          tagName: TensorFlow
+        - tagId: 95
+          tagName: PyTorch
+        - tagId: 96
+          tagName: OpenCV
+        - tagId: 97
+          tagName: Android
+        - tagId: 98
+          tagName: iOS
+        - tagId: 99
+          tagName: Flutter
+        - tagId: 100
+          tagName: React Native
