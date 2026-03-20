@@ -1,3 +1,8 @@
+<p align="center">
+  <img src="https://www.vectorlogo.zone/logos/openapis/openapis-ar21.svg" alt="OpenAPI Logo" height="80"/>
+  <img src="https://upload.wikimedia.org/wikipedia/commons/a/ab/Swagger-logo.png" alt="Swagger Logo" height="80"/>
+</p>
+
 # OpenAPI Specification & Swagger Documentation
 
 This repository documents the full lifecycle of working with the **OpenAPI Specification (OAS)** and the **Swagger ecosystem**, covering both foundational concepts and advanced implementation patterns used in real-world API design and documentation.
